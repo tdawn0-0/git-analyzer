@@ -4,27 +4,33 @@ Local-first multi-repository Git **engineering activity** analysis (not employee
 
 ## Status
 
-**Phase 1–2 complete** (design, metrics, discovery, Git analyzer, aggregation, Cobra CLI).
+**MVP Phases 1–3:** design, metrics, discovery, analyzer, aggregation, Bubble Tea TUI (Lip Gloss + ntcharts + Score Explain).
 
-Not yet: Bubble Tea TUI / Lip Gloss / ntcharts / Score Explain UI.
-
-## Usage
+## Run TUI
 
 ```bash
 go test ./...
 go build -o git-workstats ./cmd/git-workstats
 
-./git-workstats ~/code \
-  --since 2026-09-01 \
-  --until 2026-09-30 \
-  --jobs 4 \
-  --max-depth 6
+./git-workstats ~/code --since 2026-09-01 --jobs 4
 ```
 
-Flags: `--since`, `--until`, `--author`, `--repo`, `--branch`, `--max-depth`, `--jobs`, `--exclude`.
+Text summary (no TUI):
 
-Optional workspace config: `.workstats.yml` (modules, types, authors, ignore/generated).
+```bash
+./git-workstats --text ~/code
+```
+
+### Keys
+
+`j/k` move · `Enter`/`l` open · `h` back · `Tab` focus · `e` Score Explain · `r`/`d` repo/developer · `t` trend · `s` sort · `/` filter · `?` help · `q` quit · `Ctrl+C` cancel/quit
+
+### Flags
+
+`--since`, `--until`, `--author`, `--repo`, `--branch`, `--max-depth`, `--jobs`, `--exclude`, `--text`
+
+Optional config: `.workstats.yml`
 
 ## Layout
 
-See [`docs/phase1-design.md`](docs/phase1-design.md) for architecture and ChangeScore math.
+See [`docs/phase1-design.md`](docs/phase1-design.md).

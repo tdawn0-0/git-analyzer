@@ -13,6 +13,7 @@ import (
 
 	"github.com/tdawn0-0/git-analyzer/internal/config"
 	"github.com/tdawn0-0/git-analyzer/internal/model"
+	"github.com/tdawn0-0/git-analyzer/internal/tui"
 	"github.com/tdawn0-0/git-analyzer/internal/workspace"
 )
 
@@ -26,6 +27,7 @@ type Options struct {
 	MaxDepth int
 	Jobs     int
 	Exclude  []string
+	Text     bool // print summary instead of TUI
 }
 
 // NewRootCommand builds the Cobra root command for git-workstats.
@@ -57,11 +59,12 @@ func NewRootCommand() *cobra.Command {
 	cmd.Flags().IntVar(&opts.MaxDepth, "max-depth", config.DefaultMaxDepth, "Max discovery depth")
 	cmd.Flags().IntVar(&opts.Jobs, "jobs", workspace.DefaultJobs(), "Max concurrent repository analyzers")
 	cmd.Flags().StringSliceVar(&opts.Exclude, "exclude", nil, "Extra directory names/globs to skip during discovery")
+	cmd.Flags().BoolVar(&opts.Text, "text", false, "Print text summary instead of launching the TUI")
 
 	return cmd
 }
 
-// Run discovers, analyzes, aggregates, and prints a text summary (Phase 2 smoke output).
+// Run discovers and analyzes, then launches the TUI (or prints --text summary).
 func Run(ctx context.Context, root string, opts Options, out io.Writer) error {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -72,8 +75,28 @@ func Run(ctx context.Context, root string, opts Options, out io.Writer) error {
 		return err
 	}
 
-	analyzer := workspace.NewAnalyzer()
-	stats, _, err := analyzer.Run(ctx, abs, workspace.AnalyzeOptions{
+	if opts.Text {
+		analyzer := workspace.NewAnalyzer()
+		stats, _, err := analyzer.Run(ctx, abs, workspace.AnalyzeOptions{
+			Since:    opts.Since,
+			Until:    opts.Until,
+			Author:   opts.Author,
+			Repo:     opts.Repo,
+			Branch:   opts.Branch,
+			MaxDepth: opts.MaxDepth,
+			Jobs:     opts.Jobs,
+			Exclude:  opts.Exclude,
+			Config:   cfg,
+		})
+		if err != nil {
+			return err
+		}
+		PrintSummary(out, stats)
+		return nil
+	}
+
+	return tui.Run(ctx, tui.Options{
+		Root:     abs,
 		Since:    opts.Since,
 		Until:    opts.Until,
 		Author:   opts.Author,
@@ -84,12 +107,6 @@ func Run(ctx context.Context, root string, opts Options, out io.Writer) error {
 		Exclude:  opts.Exclude,
 		Config:   cfg,
 	})
-	if err != nil {
-		return err
-	}
-
-	PrintSummary(out, stats)
-	return nil
 }
 
 // PrintSummary writes a human-readable analysis summary.
@@ -114,14 +131,14 @@ func PrintSummary(out io.Writer, stats model.WorkspaceStats) {
 	fmt.Fprintf(out, "status: complete=%d skipped=%d error=%d\n", complete, skipped, errored)
 
 	if len(stats.Developers) > 0 {
-		fmt.Fprintln(out, "\nDevelopers (by Change Intensity):")
+		fmt.Fprintln(out, "\nDevelopers (by Change Intensity / Activity):")
 		limit := 10
 		if len(stats.Developers) < limit {
 			limit = len(stats.Developers)
 		}
 		for i := 0; i < limit; i++ {
 			d := stats.Developers[i]
-			fmt.Fprintf(out, "  %-20s  changes=%-4d  score=%.2f  avg=%.2f  +%d/-%d  repos=%d  cross-module=%d\n",
+			fmt.Fprintf(out, "  %-20s  changes=%-4d  intensity=%.2f  avg=%.2f  +%d/-%d  repos=%d  cross-module=%d\n",
 				trim(d.Developer, 20), d.ChangeCount, d.TotalScore, d.AverageScore,
 				d.AddedLines, d.DeletedLines, len(d.RepositoryIDs), d.CrossModuleChanges)
 		}
@@ -138,7 +155,7 @@ func PrintSummary(out io.Writer, stats model.WorkspaceStats) {
 			if b.ChangeCount == 0 {
 				continue
 			}
-			fmt.Fprintf(out, "  %s  score=%.2f  +%d/-%d  changes=%d\n",
+			fmt.Fprintf(out, "  %s  intensity=%.2f  +%d/-%d  changes=%d\n",
 				b.Date.Format("2006-01-02"), b.TotalScore, b.AddedLines, b.DeletedLines, b.ChangeCount)
 			shown++
 		}
