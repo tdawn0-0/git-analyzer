@@ -16,7 +16,7 @@ type Repository struct {
 	Remote string // remote.origin.url when available
 }
 
-// Author is a Git identity after optional mailmap / config resolution (later phases).
+// Author is a Git identity after optional mailmap / config resolution.
 type Author struct {
 	Name  string
 	Email string
@@ -75,7 +75,7 @@ type ChangeUnit struct {
 	Score ScoreBreakdown
 }
 
-// DeveloperStats aggregates ChangeUnits for one developer identity (populated later).
+// DeveloperStats aggregates ChangeUnits for one developer identity.
 type DeveloperStats struct {
 	Developer string
 
@@ -88,14 +88,27 @@ type DeveloperStats struct {
 
 	AddedLines   int
 	DeletedLines int
+	NetLines     int
 
-	ModulesTouched   map[string]struct{}
+	ModulesTouched     map[string]struct{}
+	CrossModuleChanges int
+
 	TypeDistribution map[ChangeType]int
+
+	FeatureCount  int
+	FixCount      int
+	RefactorCount int
+	PerfCount     int
+	TestCount     int
+	DocsCount     int
+	ChoreCount    int
 }
 
-// RepositoryStats aggregates ChangeUnits for one repository (populated later).
+// RepositoryStats aggregates ChangeUnits for one repository.
 type RepositoryStats struct {
 	Repository Repository
+
+	Status RepositoryStatus
 
 	ChangeCount int
 	Developers  []string
@@ -106,15 +119,27 @@ type RepositoryStats struct {
 	DeletedLines int
 
 	TypeDistribution map[ChangeType]int
+
+	Error string // set when Status is Error or Skipped with reason
 }
 
-// WorkspaceStats is the full analysis result for the TUI (populated later).
+// DailyBucket is one calendar day of Change Intensity / line activity.
+type DailyBucket struct {
+	Date         time.Time // truncated to UTC midnight
+	TotalScore   float64
+	AddedLines   int
+	DeletedLines int
+	ChangeCount  int
+}
+
+// WorkspaceStats is the full analysis result for the CLI / future TUI.
 type WorkspaceStats struct {
 	Root string
 
 	Repositories []RepositoryStats
 	Developers   []DeveloperStats
 	Changes      []ChangeUnit
+	Timeline     []DailyBucket
 }
 
 // RepositoryStatus is the per-repo analysis lifecycle state.

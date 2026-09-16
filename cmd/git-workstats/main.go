@@ -1,12 +1,7 @@
 package main
 
-import (
-	"fmt"
-	"os"
-)
+import "github.com/tdawn0-0/git-analyzer/internal/app"
 
-// Phase 1: CLI entry is a stub. Cobra wiring lands with analyzer/TUI phases.
 func main() {
-	fmt.Fprintln(os.Stderr, "git-workstats: Phase 1 foundation (metrics + discovery). Analyzer/TUI not yet implemented.")
-	os.Exit(0)
+	app.Execute()
 }

@@ -1,6 +1,11 @@
 package config
 
-import "github.com/tdawn0-0/git-analyzer/internal/model"
+import (
+	"path/filepath"
+	"strings"
+
+	"github.com/tdawn0-0/git-analyzer/internal/model"
+)
 
 // DefaultMaxDepth is the default filesystem recursion depth for repository discovery.
 const DefaultMaxDepth = 6
@@ -28,16 +33,22 @@ type ModuleDef struct {
 	Layer  string   `yaml:"layer"`
 }
 
-// Config is the Phase 1 subset of .workstats.yml needed by metrics and discovery.
+// RepoConfig is an optional per-repository override block.
+type RepoConfig struct {
+	Modules map[string]ModuleDef `yaml:"modules"`
+}
+
+// Config is the .workstats.yml surface used by metrics, discovery, and analysis.
 type Config struct {
-	Version   int                    `yaml:"version"`
-	Workspace WorkspaceConfig        `yaml:"workspace"`
-	Analysis  AnalysisConfig         `yaml:"analysis"`
-	Ignore    []string               `yaml:"ignore"`
-	Generated []string               `yaml:"generated"`
-	Modules   map[string]ModuleDef   `yaml:"modules"`
-	Types     map[string]float64     `yaml:"types"`
-	Authors   map[string][]string    `yaml:"authors"`
+	Version      int                    `yaml:"version"`
+	Workspace    WorkspaceConfig        `yaml:"workspace"`
+	Analysis     AnalysisConfig         `yaml:"analysis"`
+	Ignore       []string               `yaml:"ignore"`
+	Generated    []string               `yaml:"generated"`
+	Modules      map[string]ModuleDef   `yaml:"modules"`
+	Repositories map[string]RepoConfig  `yaml:"repositories"`
+	Types        map[string]float64     `yaml:"types"`
+	Authors      map[string][]string    `yaml:"authors"`
 }
 
 // WorkspaceConfig controls repository discovery.
@@ -88,9 +99,10 @@ func Defaults() Config {
 			"**/*.generated.ts",
 			"**/generated/**",
 		},
-		Modules: map[string]ModuleDef{},
-		Types:   DefaultTypeWeights(),
-		Authors: map[string][]string{},
+		Modules:      map[string]ModuleDef{},
+		Repositories: map[string]RepoConfig{},
+		Types:        DefaultTypeWeights(),
+		Authors:      map[string][]string{},
 	}
 }
 
@@ -108,10 +120,27 @@ func (c Config) TypeWeight(t model.ChangeType) float64 {
 	return 1.0
 }
 
-// ModuleWeights returns module name → weight for ModuleFactor.
-func (c Config) ModuleWeights() map[string]float64 {
-	out := make(map[string]float64, len(c.Modules))
-	for name, def := range c.Modules {
+// ModulesForRepo returns global modules merged with repository-specific overrides.
+// Repo modules replace same-named global entries; other globals remain.
+func (c Config) ModulesForRepo(repoName string) map[string]ModuleDef {
+	out := make(map[string]ModuleDef, len(c.Modules))
+	for k, v := range c.Modules {
+		out[k] = v
+	}
+	if c.Repositories != nil {
+		if rc, ok := c.Repositories[repoName]; ok {
+			for k, v := range rc.Modules {
+				out[k] = v
+			}
+		}
+	}
+	return out
+}
+
+// ModuleWeights returns module name → weight for ModuleFactor from a module map.
+func ModuleWeights(mods map[string]ModuleDef) map[string]float64 {
+	out := make(map[string]float64, len(mods))
+	for name, def := range mods {
 		w := def.Weight
 		if w == 0 {
 			w = 1.0
@@ -119,4 +148,107 @@ func (c Config) ModuleWeights() map[string]float64 {
 		out[name] = w
 	}
 	return out
+}
+
+// ModuleWeights returns module name → weight for ModuleFactor (global modules only).
+func (c Config) ModuleWeights() map[string]float64 {
+	return ModuleWeights(c.Modules)
+}
+
+// ResolveDeveloper maps a raw/mailmap identity to a canonical developer name.
+// Priority: authors config (by email, then by name) > provided name.
+func (c Config) ResolveDeveloper(name, email string) string {
+	email = strings.TrimSpace(email)
+	name = strings.TrimSpace(name)
+	if c.Authors != nil {
+		for canon, aliases := range c.Authors {
+			for _, a := range aliases {
+				a = strings.TrimSpace(a)
+				if a == "" {
+					continue
+				}
+				if strings.EqualFold(a, email) || strings.EqualFold(a, name) {
+					return canon
+				}
+				// Allow "Name <email>" style aliases.
+				if strings.Contains(a, "<") && strings.Contains(a, ">") {
+					start := strings.IndexByte(a, '<')
+					end := strings.IndexByte(a, '>')
+					if start >= 0 && end > start {
+						inner := strings.TrimSpace(a[start+1 : end])
+						if strings.EqualFold(inner, email) {
+							return canon
+						}
+					}
+				}
+			}
+			if strings.EqualFold(canon, name) {
+				return canon
+			}
+		}
+	}
+	if name != "" {
+		return name
+	}
+	if email != "" {
+		return email
+	}
+	return "unknown"
+}
+
+// MatchPath reports whether repo-relative path matches a doublestar-ish glob.
+func MatchPath(pattern, path string) bool {
+	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if pattern == "" || path == "" {
+		return false
+	}
+	return matchDoublestar(pattern, path)
+}
+
+// PathExcluded reports whether path matches any ignore/generated style pattern.
+func PathExcluded(path string, patterns []string) bool {
+	for _, p := range patterns {
+		if MatchPath(p, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchDoublestar(pattern, path string) bool {
+	// Fast path: filepath.Match when no **.
+	if !strings.Contains(pattern, "**") {
+		ok, err := filepath.Match(pattern, path)
+		return err == nil && ok
+	}
+	return matchStars(strings.Split(pattern, "/"), strings.Split(path, "/"))
+}
+
+func matchStars(patParts, pathParts []string) bool {
+	for len(patParts) > 0 {
+		p := patParts[0]
+		if p == "**" {
+			if len(patParts) == 1 {
+				return true
+			}
+			// Try consuming zero or more path segments.
+			for i := 0; i <= len(pathParts); i++ {
+				if matchStars(patParts[1:], pathParts[i:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if len(pathParts) == 0 {
+			return false
+		}
+		ok, err := filepath.Match(p, pathParts[0])
+		if err != nil || !ok {
+			return false
+		}
+		patParts = patParts[1:]
+		pathParts = pathParts[1:]
+	}
+	return len(pathParts) == 0
 }

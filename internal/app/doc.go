@@ -1,2 +1,2 @@
-// Package app wires CLI lifecycle (implemented in a later phase).
+// Package app wires the Cobra CLI for git-workstats.
 package app
