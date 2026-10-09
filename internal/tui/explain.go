@@ -79,7 +79,7 @@ func renderExplain(c model.ChangeUnit, repoName string, width int) string {
 		c.Score.SizeScore, c.Score.ComplexityFactor, c.Score.ModuleFactor,
 		c.Score.TypeFactor, c.Score.QualityFactor))
 	b.WriteString(styleAccent().Bold(true).Render(fmt.Sprintf("  = %.4f  Change Intensity", c.Score.Final)) + "\n")
-	b.WriteString("\n" + styleMuted().Render("h back · j/k other changes · q quit"))
+	b.WriteString("\n" + styleMuted().Render("h back · j/k scroll · PgUp/PgDn page · q quit"))
 
 	_ = width
 	return b.String()

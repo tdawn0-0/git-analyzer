@@ -81,7 +81,7 @@ func TestAnalyzeRepositoryScoresAndModules(t *testing.T) {
 
 	cfg := config.Defaults()
 	cfg.Modules = map[string]config.ModuleDef{
-		"api": {Paths: []string{"server/api/**"}, Weight: 1.1, Layer: "backend"},
+		"api":  {Paths: []string{"server/api/**"}, Weight: 1.1, Layer: "backend"},
 		"docs": {Paths: []string{"docs/**"}, Weight: 0.9, Layer: "docs"},
 	}
 
@@ -210,9 +210,9 @@ func TestLanguageAndModuleMapping(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 	mods := map[string]config.ModuleDef{
-		"api":  {Paths: []string{"server/api/**"}, Layer: "backend"},
-		"db":   {Paths: []string{"**/migration/**"}, Layer: "database"},
-		"web":  {Paths: []string{"frontend/**"}, Layer: "frontend"},
+		"api": {Paths: []string{"server/api/**"}, Layer: "backend"},
+		"db":  {Paths: []string{"**/migration/**"}, Layer: "database"},
+		"web": {Paths: []string{"frontend/**"}, Layer: "frontend"},
 	}
 	got := git.MatchModules("server/api/x.go", mods)
 	if len(got) != 1 || got[0] != "api" {
@@ -252,5 +252,21 @@ func TestInferTypeFallbackInAnalyze(t *testing.T) {
 	}
 	if found == nil || found.Type != model.ChangeTypeTest {
 		t.Fatalf("got %+v", found)
+	}
+}
+
+func TestLogResolvesMailmap(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	initRepo(t, root)
+	if err := os.WriteFile(filepath.Join(root, ".mailmap"), []byte("Canonical <canonical@example.com> Test <test@example.com>\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	commits, err := git.LogCommits(context.Background(), root, git.AnalyzeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 1 || commits[0].Author != "Canonical" || commits[0].Email != "canonical@example.com" {
+		t.Fatalf("mailmap not resolved: %+v", commits)
 	}
 }

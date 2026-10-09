@@ -10,7 +10,7 @@ type Workspace struct {
 
 // Repository is a single local Git repository (including worktrees and nested repos).
 type Repository struct {
-	ID     string // remote.origin.url if set, else hash of absolute path
+	ID     string // origin URL, else hash of canonical shared Git directory
 	Name   string // basename of repository root
 	Path   string // absolute path to repository root
 	Remote string // remote.origin.url when available

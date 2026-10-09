@@ -102,39 +102,56 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.Focus = (m.Focus + 1) % 5
 		return m, nil
 	case "d":
-		m.Active = ViewDeveloper
-		m.Focus = FocusChanges
-		return m, nil
+		return m.navigate(ViewDeveloper), nil
 	case "r":
-		m.Active = ViewRepository
-		m.Focus = FocusChanges
-		return m, nil
+		return m.navigate(ViewRepository), nil
 	case "e":
-		if _, ok := m.selectedChange(); ok {
-			m.Active = ViewExplain
-		} else if m.Active == ViewWorkspace || m.Active == ViewDeveloper || m.Active == ViewRepository {
-			// Prefer changes context: jump to changes then explain if possible
-			changes := m.filteredChanges()
-			if len(changes) > 0 {
-				m.Active = ViewExplain
+		if m.Active != ViewExplain {
+			if _, ok := m.selectedChange(); ok {
+				m = m.navigate(ViewExplain)
 			}
 		}
+		return m, nil
+	case "pgdown", "ctrl+d":
+		m.pageMove(1)
+		return m, nil
+	case "pgup", "ctrl+u":
+		m.pageMove(-1)
+		return m, nil
+	case "home":
+		m.scrollOffset = 0
+		return m, nil
+	case "end":
+		vp := m.bodyViewport()
+		vp.GotoBottom()
+		m.scrollOffset = vp.YOffset
 		return m, nil
 	case "h", "left", "esc", "backspace":
 		return m.goBack(), nil
 	case "l", "right", "enter":
 		return m.enterSelection(), nil
 	case "j", "down":
-		m.moveSelection(1)
+		if m.Active == ViewExplain {
+			m.scrollBy(1)
+		} else {
+			m.moveSelection(1)
+			m.scrollOffset = 0
+		}
 		return m, nil
 	case "k", "up":
-		m.moveSelection(-1)
+		if m.Active == ViewExplain {
+			m.scrollBy(-1)
+		} else {
+			m.moveSelection(-1)
+			m.scrollOffset = 0
+		}
 		return m, nil
 	}
 	return m, nil
 }
 
 func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.SelectedDeveloper, m.SelectedRepository, m.SelectedChange, m.scrollOffset = 0, 0, 0, 0
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.filtering = false
@@ -148,7 +165,8 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "backspace":
 		if len(m.filter) > 0 {
-			m.filter = m.filter[:len(m.filter)-1]
+			runes := []rune(m.filter)
+			m.filter = string(runes[:len(runes)-1])
 		}
 	default:
 		if len(msg.Runes) == 1 && msg.Type == tea.KeyRunes {
@@ -161,40 +179,29 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) goBack() Model {
-	switch m.Active {
-	case ViewExplain:
-		m.Active = ViewChanges
-	case ViewChanges:
-		if m.Focus == FocusDevelopers {
-			m.Active = ViewDeveloper
-		} else {
-			m.Active = ViewRepository
-		}
-	case ViewDeveloper, ViewRepository:
-		m.Active = ViewWorkspace
-		m.Focus = FocusDevelopers
+	if len(m.history) == 0 {
+		return m
 	}
+	frame := m.history[len(m.history)-1]
+	m.history = m.history[:len(m.history)-1]
+	m.Active, m.Focus, m.scope, m.filter = frame.active, frame.focus, frame.scope, frame.filter
+	m.SelectedChange, m.scrollOffset = frame.selectedChange, frame.scrollOffset
+	m.SelectedDeveloper, m.SelectedRepository = frame.selectedDeveloper, frame.selectedRepository
 	return m
 }
 
 func (m Model) enterSelection() Model {
 	switch m.Active {
 	case ViewWorkspace:
-		switch m.Focus {
-		case FocusDevelopers:
-			m.Active = ViewDeveloper
-			m.Focus = FocusChanges
-		case FocusRepositories:
-			m.Active = ViewRepository
-			m.Focus = FocusChanges
-		default:
-			m.Active = ViewDeveloper
+		if m.Focus == FocusRepositories {
+			return m.navigate(ViewRepository)
 		}
+		return m.navigate(ViewDeveloper)
 	case ViewDeveloper, ViewRepository:
-		m.Active = ViewChanges
+		return m.navigate(ViewChanges)
 	case ViewChanges:
 		if _, ok := m.selectedChange(); ok {
-			m.Active = ViewExplain
+			return m.navigate(ViewExplain)
 		}
 	}
 	return m
@@ -244,4 +251,17 @@ func (m *Model) moveSelection(delta int) {
 		}
 		m.SelectedChange = clampIndex(m.SelectedChange+delta, n)
 	}
+}
+
+func (m *Model) pageMove(direction int) {
+	rows := max(m.bodyHeight()-5, 1)
+	if m.Active == ViewExplain || (m.Active == ViewWorkspace && (m.Focus == FocusActivity || m.Focus == FocusProfile)) {
+		m.scrollBy(direction * max(m.bodyHeight()-1, 1))
+		return
+	}
+	if m.Active == ViewWorkspace || m.Active == ViewDeveloper {
+		rows = max(m.bodyHeight()/2-4, 1)
+	}
+	m.moveSelection(direction * rows)
+	m.scrollOffset = 0
 }

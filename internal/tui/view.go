@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tdawn0-0/git-analyzer/internal/model"
@@ -28,29 +29,47 @@ func (m Model) View() string {
 		return m.viewHelp()
 	}
 
-	var body string
-	switch m.Active {
-	case ViewRepository:
-		body = m.viewRepository()
-	case ViewDeveloper:
-		body = m.viewDeveloper()
-	case ViewChanges:
-		body = m.viewChanges()
-	case ViewExplain:
-		body = m.viewExplain()
-	default:
-		body = m.viewWorkspace()
-	}
-
 	header := m.viewHeader()
 	status := m.viewStatus()
-	// Fit content into terminal height.
-	avail := m.Height - lipgloss.Height(header) - lipgloss.Height(status) - 1
-	if avail < 5 {
-		avail = 5
+	vp := m.bodyViewport()
+	return lipgloss.JoinVertical(lipgloss.Left, header, vp.View(), status)
+}
+
+// Construct a viewport from current content so resize and filtering clamp offsets.
+func (m Model) bodyViewport() viewport.Model {
+	vp := viewport.New(max(m.Width, 1), m.bodyHeight())
+	vp.SetContent(m.viewBody())
+	vp.SetYOffset(m.scrollOffset)
+	return vp
+}
+
+func (m *Model) scrollBy(lines int) {
+	vp := m.bodyViewport()
+	vp.SetYOffset(vp.YOffset + lines)
+	m.scrollOffset = vp.YOffset
+}
+
+func (m Model) bodyHeight() int {
+	height := m.Height
+	if height <= 0 {
+		height = 30
 	}
-	body = lipgloss.NewStyle().Height(avail).MaxHeight(avail).Render(body)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, status)
+	return max(height-lipgloss.Height(m.viewHeader())-lipgloss.Height(m.viewStatus()), 1)
+}
+
+func (m Model) viewBody() string {
+	switch m.Active {
+	case ViewRepository:
+		return m.viewRepository()
+	case ViewDeveloper:
+		return m.viewDeveloper()
+	case ViewChanges:
+		return m.viewChanges()
+	case ViewExplain:
+		return m.viewExplain()
+	default:
+		return m.viewWorkspace()
+	}
 }
 
 func (m Model) viewHeader() string {
@@ -76,7 +95,7 @@ func (m Model) viewHeader() string {
 		ViewExplain:    "Explain",
 	}[m.Active]
 	line := styleTitle().Render(title) + "  " + styleAccent().Render("["+viewName+"]")
-	return line
+	return lipgloss.NewStyle().MaxWidth(max(m.Width, 1)).Render(line)
 }
 
 func dash(s string) string {
@@ -145,7 +164,9 @@ func (m Model) viewLoading() string {
 
 func (m Model) viewHelp() string {
 	body := `Keys
-  j/k or ↑/↓     move selection
+  j/k or ↑/↓     move selection / scroll explanation
+  PgUp/PgDn      scroll page
+  Home/End       scroll to start / end
   h/← or Esc     back
   l/→ or Enter   open / drill down
   Tab            cycle panel focus
@@ -157,6 +178,14 @@ func (m Model) viewHelp() string {
   ?              help
   q / Ctrl+C     quit (Ctrl+C also cancels loading)
 
+Columns
+  Intensity      total Change Intensity score
+  Commits        number of commits
+  Added/Deleted  lines added / deleted (generated changes excluded)
+  State          OK complete, ERR error, SKIP skipped
+  Date           commit date in UTC (month-day)
+  Narrow panels show fewer columns; open details for more.
+
 Wording
   Change Intensity is engineering activity — not employee performance.
   Sort by Activity = total Change Intensity.`
@@ -164,8 +193,12 @@ Wording
 }
 
 func (m Model) viewWorkspace() string {
-	devs := renderDeveloperList(m.filteredDevelopers(), m.SelectedDeveloper, m.Focus == FocusDevelopers)
-	repos := renderRepositoryList(m.filteredRepositories(), m.SelectedRepository, m.Focus == FocusRepositories)
+	listWidth := max(m.Width-4, 1)
+	if layoutFor(m.Width) != layoutStack {
+		listWidth = max(m.Width/2-6, 1)
+	}
+	devs := m.renderDevelopers(max(m.bodyHeight()/2-3, 1), listWidth)
+	repos := m.renderRepositories(max(m.bodyHeight()/2-3, 1), listWidth)
 	chart := renderTrendChart(m.timelineBuckets(), m.trend, panelChartWidth(m.Width), panelChartHeight(m.Height))
 	profile := renderProfileBars(m.workspaceTypeCounts(), panelChartWidth(m.Width))
 
@@ -173,7 +206,7 @@ func (m Model) viewWorkspace() string {
 	switch mode {
 	case layoutFour:
 		halfW := (m.Width / 2) - 2
-		halfH := (m.Height / 2) - 4
+		halfH := m.bodyHeight() / 2
 		if halfH < 6 {
 			halfH = 6
 		}
@@ -188,9 +221,9 @@ func (m Model) viewWorkspace() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	case layoutDual:
 		colW := (m.Width / 2) - 2
-		h := m.Height - 6
-		left := stylePanel(true, colW, h).Render(styleHeader().Render("Developers")+"\n"+devs+"\n\n"+styleHeader().Render("Repositories")+"\n"+repos)
-		right := stylePanel(false, colW, h).Render(styleHeader().Render(trendTitle(m.trend))+"\n"+chart+"\n\n"+styleHeader().Render("Engineering Profile")+"\n"+profile)
+		h := m.bodyHeight()
+		left := stylePanel(true, colW, h).Render(styleHeader().Render("Developers") + "\n" + devs + "\n" + styleHeader().Render("Repositories") + "\n" + repos)
+		right := stylePanel(false, colW, h).Render(styleHeader().Render(trendTitle(m.trend)) + "\n" + chart + "\n\n" + styleHeader().Render("Engineering Profile") + "\n" + profile)
 		return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	default:
 		return strings.Join([]string{
@@ -217,7 +250,14 @@ func (m Model) viewRepository() string {
 			name += "]"
 		}
 	}
-	changes := renderChangeList(m.filteredChanges(), m.SelectedChange, true)
+	if m.Width < 80 {
+		changes := m.renderChanges(max(m.bodyHeight()-4, 1), max(m.Width-6, 1))
+		return styleHeader().Render("Repository: "+name) + "\n" +
+			stylePanel(true, m.Width, max(m.bodyHeight()-1, 3)).Render(styleHeader().Render("Changes")+"\n"+changes) + "\n" +
+			renderTrendChart(m.timelineBuckets(), m.trend, max(m.Width-4, 20), 8) + "\n" +
+			renderProfileBars(selected.TypeDistribution, max(m.Width-4, 20))
+	}
+	changes := m.renderChanges(max(m.bodyHeight()-4, 1), max(m.Width/2-6, 1))
 	chart := renderTrendChart(m.timelineBuckets(), m.trend, max(m.Width/2-4, 40), 10)
 	types := renderProfileBars(selected.TypeDistribution, max(m.Width/2-4, 40))
 	top := styleHeader().Render("Repository: "+name) + "\n"
@@ -235,7 +275,7 @@ func (m Model) viewDeveloper() string {
 		selected = devs[clampIndex(m.SelectedDeveloper, len(devs))]
 		name = selected.Developer
 	}
-	changes := renderChangeList(m.filteredChanges(), m.SelectedChange, true)
+	changes := m.renderChanges(max(m.bodyHeight()/2-4, 1), max(m.Width-6, 1))
 	chart := renderTrendChart(m.timelineBuckets(), m.trend, max(m.Width-6, 40), 10)
 	profile := renderProfileBars(selected.TypeDistribution, max(m.Width-6, 40))
 	meta := fmt.Sprintf("Activity=%.2f  avg=%.2f  changes=%d  +%d/-%d  repos=%d  cross-module=%d",
@@ -249,10 +289,10 @@ func (m Model) viewDeveloper() string {
 }
 
 func (m Model) viewChanges() string {
-	changes := renderChangeList(m.filteredChanges(), m.SelectedChange, true)
+	changes := m.renderChanges(max(m.bodyHeight()-5, 1), max(m.Width-6, 1))
 	return styleHeader().Render("Changes") + "\n" +
 		styleMuted().Render("Enter/e → Change Intensity Explanation") + "\n" +
-		stylePanel(true, m.Width-2, max(m.Height-6, 10)).Render(changes)
+		stylePanel(true, m.Width-2, max(m.bodyHeight()-3, 3)).Render(changes)
 }
 
 func (m Model) viewExplain() string {

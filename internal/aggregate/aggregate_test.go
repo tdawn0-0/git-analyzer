@@ -115,3 +115,17 @@ func TestWorkspaceAggregation(t *testing.T) {
 		t.Fatal("expected skipped repo preserved")
 	}
 }
+
+func TestWorkspaceDeduplicatesClones(t *testing.T) {
+	results := []git.RepoResult{
+		{Repository: model.Repository{ID: "origin", Name: "a", Path: "/ws/a"}, Status: model.StatusComplete, Changes: []model.ChangeUnit{{RepositoryID: "origin", Hash: "shared", Author: model.Author{Name: "Dev"}, AddedLines: 2, Score: model.ScoreBreakdown{Final: 3}}}},
+		{Repository: model.Repository{ID: "origin", Name: "b", Path: "/ws/b"}, Status: model.StatusComplete, Changes: []model.ChangeUnit{{RepositoryID: "origin", Hash: "shared", Author: model.Author{Name: "Dev"}, AddedLines: 2, Score: model.ScoreBreakdown{Final: 3}}, {RepositoryID: "origin", Hash: "unique", Author: model.Author{Name: "Dev"}, AddedLines: 1, Score: model.ScoreBreakdown{Final: 1}}}},
+	}
+	ws := aggregate.Workspace("/ws", results)
+	if len(ws.Repositories) != 1 || len(ws.Changes) != 2 || ws.Developers[0].TotalScore != 4 {
+		t.Fatalf("duplicate clone activity: %+v", ws)
+	}
+	if ws.Repositories[0].ChangeCount != 2 {
+		t.Fatalf("repo totals inconsistent: %+v", ws.Repositories)
+	}
+}

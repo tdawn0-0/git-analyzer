@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/tdawn0-0/git-analyzer/internal/aggregate"
 	"github.com/tdawn0-0/git-analyzer/internal/config"
 	"github.com/tdawn0-0/git-analyzer/internal/git"
 	"github.com/tdawn0-0/git-analyzer/internal/model"
@@ -84,31 +83,13 @@ func filterRepos(repos []model.Repository, needle string) []model.Repository {
 
 func startAnalysisCmd(ctx context.Context, root string, repos []model.Repository, cfg config.Config, opts Options) tea.Cmd {
 	return func() tea.Msg {
-		jobs := opts.Jobs
-		if jobs <= 0 {
-			jobs = workspace.DefaultJobs()
-		}
-		gitOpts := git.AnalyzeOptions{
-			Since:  opts.Since,
-			Until:  opts.Until,
-			Branch: opts.Branch,
-		}
-		if opts.Author != "" {
-			gitOpts.Author = opts.Author
-		}
-
-		results := workspace.Map(ctx, jobs, repos, func(ctx context.Context, repo model.Repository) git.RepoResult {
-			res := git.AnalyzeRepository(ctx, repo, cfg, gitOpts)
-			if opts.Author != "" {
-				res.Changes = git.FilterChangesByAuthor(res.Changes, opts.Author)
-			}
-			return res
+		stats, _, err := workspace.AnalyzeRepositories(ctx, root, repos, workspace.AnalyzeOptions{
+			Since: opts.Since, Until: opts.Until, Author: opts.Author, Branch: opts.Branch, Jobs: opts.Jobs, Config: cfg,
 		})
-
-		if err := ctx.Err(); err != nil {
+		if err != nil {
 			return AnalysisErrorMsg{Err: err}
 		}
-		return AnalysisFinishedMsg{Stats: aggregate.Workspace(root, results)}
+		return AnalysisFinishedMsg{Stats: stats}
 	}
 }
 

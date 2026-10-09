@@ -66,32 +66,27 @@ func (a *Analyzer) Run(ctx context.Context, root string, opts AnalyzeOptions) (m
 		repos = filterReposByName(repos, opts.Repo)
 	}
 
-	jobs := opts.Jobs
-	if jobs <= 0 {
-		jobs = DefaultJobs()
-	}
+	return AnalyzeRepositories(ctx, absRoot, repos, opts)
+}
 
-	gitOpts := git.AnalyzeOptions{
-		Since:  opts.Since,
-		Until:  opts.Until,
-		Branch: opts.Branch,
+// AnalyzeRepositories is the shared analysis pipeline for text and TUI sessions.
+// Filter identities after mailmap/config resolution so canonical names and aliases
+// cannot be removed prematurely by git log's raw-author filter.
+func AnalyzeRepositories(ctx context.Context, root string, repos []model.Repository, opts AnalyzeOptions) (model.WorkspaceStats, []git.RepoResult, error) {
+	cfg := opts.Config
+	if cfg.Version == 0 && len(cfg.Types) == 0 {
+		cfg = config.Defaults()
 	}
-	// Pass author to git log only when it looks like a raw git identity filter;
-	// canonical config names are applied after scoring via FilterChangesByAuthor.
-	if opts.Author != "" && !isCanonicalAuthorOnly(cfg, opts.Author) {
-		gitOpts.Author = opts.Author
-	}
-
-	results := Map(ctx, jobs, repos, func(ctx context.Context, repo model.Repository) git.RepoResult {
+	gitOpts := git.AnalyzeOptions{Since: opts.Since, Until: opts.Until, Branch: opts.Branch}
+	results := Map(ctx, opts.Jobs, repos, func(ctx context.Context, repo model.Repository) git.RepoResult {
 		res := git.AnalyzeRepository(ctx, repo, cfg, gitOpts)
-		if opts.Author != "" {
-			res.Changes = git.FilterChangesByAuthor(res.Changes, opts.Author)
-		}
+		res.Changes = git.FilterChangesByAuthor(res.Changes, opts.Author)
 		return res
 	})
-
-	stats := aggregate.Workspace(absRoot, results)
-	return stats, results, nil
+	if err := ctx.Err(); err != nil {
+		return model.WorkspaceStats{}, results, err
+	}
+	return aggregate.Workspace(root, results), results, nil
 }
 
 func filterReposByName(repos []model.Repository, needle string) []model.Repository {
@@ -103,21 +98,6 @@ func filterReposByName(repos []model.Repository, needle string) []model.Reposito
 		}
 	}
 	return out
-}
-
-func isCanonicalAuthorOnly(cfg config.Config, author string) bool {
-	if cfg.Authors == nil {
-		return false
-	}
-	if _, ok := cfg.Authors[author]; ok {
-		return true
-	}
-	for name := range cfg.Authors {
-		if strings.EqualFold(name, author) {
-			return true
-		}
-	}
-	return false
 }
 
 // LoadConfigNearRoot loads .workstats.yml from root if present, else defaults.

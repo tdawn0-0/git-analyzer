@@ -44,7 +44,7 @@ func LogCommits(ctx context.Context, repoPath string, opts AnalyzeOptions) ([]Ra
 		"--use-mailmap",
 		"--date=iso-strict",
 		"--numstat",
-		"--format=" + commitMarker + "%n%H%n%an%n%ae%n%aI%n%s",
+		"--format=" + commitMarker + "%n%H%n%aN%n%aE%n%aI%n%s",
 	}
 	if opts.Since != "" {
 		args = append(args, "--since="+opts.Since)

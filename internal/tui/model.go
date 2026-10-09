@@ -67,6 +67,22 @@ type Options struct {
 }
 
 // Model is the Bubble Tea root model.
+type changeScope struct {
+	repositoryID string
+	developer    string
+}
+
+type navigationFrame struct {
+	selectedDeveloper  int
+	selectedRepository int
+	active             View
+	focus              Focus
+	scope              changeScope
+	filter             string
+	selectedChange     int
+	scrollOffset       int
+}
+
 type Model struct {
 	Width  int
 	Height int
@@ -88,16 +104,19 @@ type Model struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	phase          string // discovering | analyzing | ready
-	repos          []model.Repository
-	repoResults    []git.RepoResult
-	analyzedCount  int
-	showHelp       bool
-	filter         string
-	filtering      bool
-	sort           SortMode
-	trend          TrendMode
-	statusHint     string
+	phase         string // discovering | analyzing | ready
+	repos         []model.Repository
+	repoResults   []git.RepoResult
+	analyzedCount int
+	showHelp      bool
+	filter        string
+	filtering     bool
+	sort          SortMode
+	trend         TrendMode
+	scope         changeScope
+	history       []navigationFrame
+	scrollOffset  int
+	statusHint    string
 }
 
 // New creates a TUI model. Analysis starts in Init via tea.Cmd.
@@ -176,7 +195,7 @@ func (m Model) filteredChanges() []model.ChangeUnit {
 	}
 	changes := m.Workspace.Changes
 	switch m.Active {
-	case ViewRepository, ViewChanges:
+	case ViewRepository:
 		repos := m.filteredRepositories()
 		if len(repos) == 0 {
 			return nil
@@ -202,6 +221,18 @@ func (m Model) filteredChanges() []model.ChangeUnit {
 			if c.Author.Name == name {
 				out = append(out, c)
 			}
+		}
+		changes = out
+	case ViewChanges, ViewExplain:
+		var out []model.ChangeUnit
+		for _, c := range changes {
+			if m.scope.repositoryID != "" && c.RepositoryID != m.scope.repositoryID {
+				continue
+			}
+			if m.scope.developer != "" && c.Author.Name != m.scope.developer {
+				continue
+			}
+			out = append(out, c)
 		}
 		changes = out
 	}
@@ -239,4 +270,42 @@ func clampIndex(i, n int) int {
 		return n - 1
 	}
 	return i
+}
+
+func (m Model) currentScope() changeScope {
+	switch m.Active {
+	case ViewRepository:
+		repos := m.filteredRepositories()
+		if len(repos) > 0 {
+			return changeScope{repositoryID: repos[clampIndex(m.SelectedRepository, len(repos))].Repository.ID}
+		}
+	case ViewDeveloper:
+		devs := m.filteredDevelopers()
+		if len(devs) > 0 {
+			return changeScope{developer: devs[clampIndex(m.SelectedDeveloper, len(devs))].Developer}
+		}
+	case ViewChanges, ViewExplain:
+		return m.scope
+	}
+	return changeScope{}
+}
+
+func (m Model) navigate(view View) Model {
+	frame := navigationFrame{active: m.Active, focus: m.Focus, scope: m.scope, filter: m.filter, selectedChange: m.SelectedChange, scrollOffset: m.scrollOffset, selectedDeveloper: m.SelectedDeveloper, selectedRepository: m.SelectedRepository}
+	scope := m.currentScope()
+	// Copy before appending: Bubble Tea models are values and must not share a mutable stack.
+	m.history = append(append([]navigationFrame(nil), m.history...), frame)
+	m.Active = view
+	m.scrollOffset = 0
+	if view == ViewChanges || view == ViewExplain {
+		m.scope = scope
+		if frame.active != ViewChanges && frame.active != ViewExplain {
+			m.filter = ""
+		}
+	} else {
+		m.scope = changeScope{}
+		m.SelectedChange = 0
+	}
+	m.Focus = FocusChanges
+	return m
 }

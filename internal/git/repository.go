@@ -10,11 +10,23 @@ import (
 	"github.com/tdawn0-0/git-analyzer/internal/model"
 )
 
-// RepositoryID returns remote.origin.url when set, otherwise a hash of the absolute path.
+// RepositoryID uses the origin URL, otherwise the canonical shared Git directory.
 func RepositoryID(ctx context.Context, absPath string) (id, remote string) {
 	remote = RemoteOriginURL(ctx, absPath)
 	if remote != "" {
 		return remote, remote
+	}
+	// Worktrees without an origin still share the same Git object database.
+	common, err := RunGit(ctx, absPath, "rev-parse", "--git-common-dir")
+	if err == nil {
+		common = strings.TrimSpace(common)
+		if !filepath.IsAbs(common) {
+			common = filepath.Join(absPath, common)
+		}
+		if canonical, err := filepath.EvalSymlinks(common); err == nil {
+			common = canonical
+		}
+		absPath = filepath.Clean(common)
 	}
 	sum := sha256.Sum256([]byte(absPath))
 	return "path:" + hex.EncodeToString(sum[:16]), ""

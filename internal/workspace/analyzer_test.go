@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/tdawn0-0/git-analyzer/internal/config"
+	"github.com/tdawn0-0/git-analyzer/internal/git"
 	"github.com/tdawn0-0/git-analyzer/internal/model"
 	"github.com/tdawn0-0/git-analyzer/internal/workspace"
 )
@@ -126,5 +127,47 @@ func TestDefaultJobsBounded(t *testing.T) {
 	j := workspace.DefaultJobs()
 	if j < 1 || j > 8 {
 		t.Fatalf("jobs=%d", j)
+	}
+}
+
+func TestClonesAndWorktreesCountUniqueCommits(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	a := filepath.Join(root, "a")
+	b := filepath.Join(root, "b")
+	wt := filepath.Join(root, "worktree")
+	initRepo(t, a)
+	gitRun(t, a, "remote", "add", "origin", "https://example.test/shared.git")
+	gitRun(t, root, "clone", a, b)
+	gitRun(t, b, "remote", "set-url", "origin", "https://example.test/shared.git")
+	gitRun(t, a, "worktree", "add", "-b", "feature", wt)
+	if err := os.WriteFile(filepath.Join(wt, "feature.go"), []byte("package feature\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, wt, "add", ".")
+	gitRun(t, wt, "commit", "-m", "feat: branch specific")
+	stats, _, err := workspace.NewAnalyzer().Run(context.Background(), root, workspace.AnalyzeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.Repositories) != 1 || len(stats.Changes) != 2 || stats.Developers[0].ChangeCount != 2 {
+		t.Fatalf("duplicate/omitted activity: %+v", stats)
+	}
+	gitRun(t, a, "remote", "remove", "origin")
+	stats, _, err = workspace.NewAnalyzer().Run(context.Background(), a, workspace.AnalyzeOptions{})
+	if err != nil || len(stats.Changes) != 1 {
+		t.Fatalf("single repo: %+v %v", stats, err)
+	}
+	// With no origin, main and linked worktrees must still share a logical ID.
+	ra, err := git.NewRepository(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rw, err := git.NewRepository(context.Background(), wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ra.ID != rw.ID {
+		t.Fatalf("worktree identity differs: %s %s", ra.ID, rw.ID)
 	}
 }

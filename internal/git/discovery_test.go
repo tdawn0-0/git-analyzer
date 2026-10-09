@@ -65,7 +65,11 @@ func TestScanNormalRepo(t *testing.T) {
 	if found[0].Name != "app" {
 		t.Fatalf("name=%q", found[0].Name)
 	}
-	if filepath.Clean(found[0].Path) != filepath.Clean(repo) {
+	canonical, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(found[0].Path) != filepath.Clean(canonical) {
 		t.Fatalf("path=%q want %q", found[0].Path, repo)
 	}
 	if found[0].ID == "" {

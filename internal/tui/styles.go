@@ -6,7 +6,7 @@ import (
 
 var (
 	colorMuted   = lipgloss.Color("245")
-	colorAccent  = lipgloss.Color("39")  // blue — Activity, not "winner"
+	colorAccent  = lipgloss.Color("39") // blue — Activity, not "winner"
 	colorOK      = lipgloss.Color("78")
 	colorErr     = lipgloss.Color("203")
 	colorBorder  = lipgloss.Color("238")
@@ -50,8 +50,8 @@ func stylePanel(focused bool, width, height int) lipgloss.Style {
 	s := lipgloss.NewStyle().
 		Border(border).
 		BorderForeground(fg).
-		Width(width).
-		Height(height).
+		Width(max(width-2, 1)).
+		Height(max(height-2, 1)).
 		Padding(0, 1)
 	return s
 }
