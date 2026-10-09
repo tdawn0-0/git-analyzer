@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tdawn0-0/git-analyzer/internal/config"
 	"github.com/tdawn0-0/git-analyzer/internal/git"
@@ -169,5 +170,57 @@ func TestClonesAndWorktreesCountUniqueCommits(t *testing.T) {
 	}
 	if ra.ID != rw.ID {
 		t.Fatalf("worktree identity differs: %s %s", ra.ID, rw.ID)
+	}
+}
+
+func TestProgressEmittedWhileOtherRepositoryIsRunning(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	initRepo(t, filepath.Join(root, "a"))
+	initRepo(t, filepath.Join(root, "b"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	progress := make(chan workspace.RepositoryProgress, 4)
+	release := make(chan struct{})
+	defer close(release)
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := workspace.NewAnalyzer().Run(ctx, root, workspace.AnalyzeOptions{Jobs: 1, OnProgress: func(p workspace.RepositoryProgress) {
+			progress <- p
+			if p.Index == 1 && p.Result.Status == model.StatusAnalyzing {
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
+			}
+		}})
+		done <- err
+	}()
+	for i := 0; i < 3; i++ {
+		select {
+		case p := <-progress:
+			if i == 1 && (p.Index != 0 || p.Result.Status != model.StatusComplete) {
+				t.Fatalf("first completion missing: %+v", p)
+			}
+			if i == 2 && (p.Index != 1 || p.Result.Status != model.StatusAnalyzing) {
+				t.Fatalf("second start missing: %+v", p)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("progress was not emitted during analysis")
+		}
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("analysis finished before second repository was released: %v", err)
+	default:
+	}
+	release <- struct{}{}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("analysis did not finish")
 	}
 }

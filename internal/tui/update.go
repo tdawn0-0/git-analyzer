@@ -2,6 +2,8 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/tdawn0-0/git-analyzer/internal/git"
+	"github.com/tdawn0-0/git-analyzer/internal/model"
 )
 
 // Update handles Bubble Tea messages. Never calls git directly.
@@ -21,7 +23,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		repos := msg.Repos
 		cfg := msg.Cfg
 		opts := m.opts
-		return m, startAnalysisCmd(m.ctx, root, repos, cfg, opts)
+		m.repoResults = make([]git.RepoResult, len(repos))
+		m.analyzedCount = 0
+		// At most two events per checkout plus one final result. The bounded queue
+		// lets worker callbacks finish even if the UI is quitting.
+		events := make(chan tea.Msg, 2*len(repos)+1)
+		m.analysisEvents = events
+		return m, tea.Batch(streamAnalysisCmd(m.ctx, root, repos, cfg, opts, events), waitAnalysisEventCmd(m.ctx, events))
+
+	case RepositoryAnalyzedMsg:
+		if !m.Loading || msg.Index < 0 || msg.Index >= len(m.repos) {
+			return m, nil
+		}
+		if len(m.repoResults) != len(m.repos) {
+			m.repoResults = make([]git.RepoResult, len(m.repos))
+		}
+		previous := m.repoResults[msg.Index].Status
+		if !repositoryFinished(previous) {
+			m.repoResults[msg.Index] = msg.Result
+			if repositoryFinished(msg.Result.Status) {
+				m.analyzedCount++
+			}
+		}
+		return m, waitAnalysisEventCmd(m.ctx, m.analysisEvents)
 
 	case AnalysisFinishedMsg:
 		m.Loading = false
@@ -29,7 +53,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ws := msg.Stats
 		m.Workspace = &ws
 		m.repoResults = nil
-		m.analyzedCount = len(ws.Repositories)
+		m.analyzedCount = len(m.repos)
+		m.analysisEvents = nil
 		m.SelectedDeveloper = 0
 		m.SelectedRepository = 0
 		m.SelectedChange = 0
@@ -39,6 +64,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AnalysisErrorMsg:
 		m.Loading = false
 		m.Err = msg.Err
+		m.analysisEvents = nil
 		m.phase = "ready"
 		m.statusHint = "Analysis error — press q to quit"
 		return m, nil
@@ -264,4 +290,8 @@ func (m *Model) pageMove(direction int) {
 	}
 	m.moveSelection(direction * rows)
 	m.scrollOffset = 0
+}
+
+func repositoryFinished(status model.RepositoryStatus) bool {
+	return status == model.StatusComplete || status == model.StatusError || status == model.StatusSkipped
 }

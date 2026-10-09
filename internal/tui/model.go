@@ -104,19 +104,20 @@ type Model struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	phase         string // discovering | analyzing | ready
-	repos         []model.Repository
-	repoResults   []git.RepoResult
-	analyzedCount int
-	showHelp      bool
-	filter        string
-	filtering     bool
-	sort          SortMode
-	trend         TrendMode
-	scope         changeScope
-	history       []navigationFrame
-	scrollOffset  int
-	statusHint    string
+	phase          string // discovering | analyzing | ready
+	repos          []model.Repository
+	repoResults    []git.RepoResult
+	analyzedCount  int
+	analysisEvents <-chan tea.Msg
+	showHelp       bool
+	filter         string
+	filtering      bool
+	sort           SortMode
+	trend          TrendMode
+	scope          changeScope
+	history        []navigationFrame
+	scrollOffset   int
+	statusHint     string
 }
 
 // New creates a TUI model. Analysis starts in Init via tea.Cmd.

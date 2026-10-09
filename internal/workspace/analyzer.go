@@ -23,6 +23,15 @@ type AnalyzeOptions struct {
 	Jobs     int
 	Exclude  []string
 	Config   config.Config
+	// OnProgress runs concurrently on workers when each repository starts/finishes.
+	// Callbacks must be concurrency-safe and return promptly.
+	OnProgress func(RepositoryProgress)
+}
+
+// RepositoryProgress identifies a local checkout by discovery index, including clones.
+type RepositoryProgress struct {
+	Index  int
+	Result git.RepoResult
 }
 
 // Analyzer discovers repositories and analyzes them concurrently.
@@ -78,9 +87,20 @@ func AnalyzeRepositories(ctx context.Context, root string, repos []model.Reposit
 		cfg = config.Defaults()
 	}
 	gitOpts := git.AnalyzeOptions{Since: opts.Since, Until: opts.Until, Branch: opts.Branch}
-	results := Map(ctx, opts.Jobs, repos, func(ctx context.Context, repo model.Repository) git.RepoResult {
+	indices := make([]int, len(repos))
+	for i := range repos {
+		indices[i] = i
+	}
+	results := Map(ctx, opts.Jobs, indices, func(ctx context.Context, index int) git.RepoResult {
+		repo := repos[index]
+		if opts.OnProgress != nil {
+			opts.OnProgress(RepositoryProgress{Index: index, Result: git.RepoResult{Repository: repo, Status: model.StatusAnalyzing}})
+		}
 		res := git.AnalyzeRepository(ctx, repo, cfg, gitOpts)
 		res.Changes = git.FilterChangesByAuthor(res.Changes, opts.Author)
+		if opts.OnProgress != nil {
+			opts.OnProgress(RepositoryProgress{Index: index, Result: res})
+		}
 		return res
 	})
 	if err := ctx.Err(); err != nil {

@@ -139,7 +139,7 @@ func (m Model) viewLoading() string {
 			}
 			st := "waiting"
 			glyph := "·"
-			if i < len(m.repoResults) {
+			if i < len(m.repoResults) && m.repoResults[i].Status != "" {
 				glyph = statusGlyph(m.repoResults[i].Status)
 				st = string(m.repoResults[i].Status)
 				if m.repoResults[i].Message != "" {

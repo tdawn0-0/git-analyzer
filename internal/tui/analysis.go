@@ -20,7 +20,7 @@ type WorkspaceDiscoveredMsg struct {
 	Cfg   config.Config
 }
 
-// RepositoryAnalyzedMsg is emitted when one repository finishes (optional progressive path).
+// RepositoryAnalyzedMsg reports a checkout starting or finishing analysis.
 type RepositoryAnalyzedMsg struct {
 	Result git.RepoResult
 	Index  int
@@ -82,14 +82,52 @@ func filterRepos(repos []model.Repository, needle string) []model.Repository {
 }
 
 func startAnalysisCmd(ctx context.Context, root string, repos []model.Repository, cfg config.Config, opts Options) tea.Cmd {
+	return func() tea.Msg { return analyzeRepositories(ctx, root, repos, cfg, opts, nil) }
+}
+
+func analyzeRepositories(ctx context.Context, root string, repos []model.Repository, cfg config.Config, opts Options, onProgress func(workspace.RepositoryProgress)) tea.Msg {
+	stats, _, err := workspace.AnalyzeRepositories(ctx, root, repos, workspace.AnalyzeOptions{
+		Since: opts.Since, Until: opts.Until, Author: opts.Author, Branch: opts.Branch, Jobs: opts.Jobs, Config: cfg, OnProgress: onProgress,
+	})
+	if err != nil {
+		return AnalysisErrorMsg{Err: err}
+	}
+	return AnalysisFinishedMsg{Stats: stats}
+}
+
+// Stream worker events through one ordered queue, including the final result.
+// Bubble Tea commands wait for one event at a time without blocking Update.
+func streamAnalysisCmd(ctx context.Context, root string, repos []model.Repository, cfg config.Config, opts Options, events chan<- tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		stats, _, err := workspace.AnalyzeRepositories(ctx, root, repos, workspace.AnalyzeOptions{
-			Since: opts.Since, Until: opts.Until, Author: opts.Author, Branch: opts.Branch, Jobs: opts.Jobs, Config: cfg,
-		})
-		if err != nil {
-			return AnalysisErrorMsg{Err: err}
+		defer close(events)
+		send := func(msg tea.Msg) {
+			select {
+			case events <- msg:
+			case <-ctx.Done():
+			}
 		}
-		return AnalysisFinishedMsg{Stats: stats}
+		final := analyzeRepositories(ctx, root, repos, cfg, opts, func(progress workspace.RepositoryProgress) {
+			send(RepositoryAnalyzedMsg{Index: progress.Index, Total: len(repos), Result: progress.Result})
+		})
+		send(final)
+		return nil
+	}
+}
+
+func waitAnalysisEventCmd(ctx context.Context, events <-chan tea.Msg) tea.Cmd {
+	if events == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		select {
+		case msg, ok := <-events:
+			if !ok {
+				return nil
+			}
+			return msg
+		case <-ctx.Done():
+			return AnalysisErrorMsg{Err: ctx.Err()}
+		}
 	}
 }
 
